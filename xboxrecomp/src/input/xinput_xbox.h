@@ -93,6 +93,9 @@ void xbox_InputInit(void);
  * Port: 0-3 (Xbox controller ports)
  */
 DWORD xbox_InputGetState(DWORD dwPort, XBOX_INPUT_STATE *pState);
+/* joystick-device fallback (jsdevice_fallback.c, Linux only) */
+int xbox_js_fallback_get_state(DWORD dwPort, XBOX_INPUT_STATE *pState);
+int xbox_js_fallback_probe(void);
 
 /**
  * Set controller vibration.

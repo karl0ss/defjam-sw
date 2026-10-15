@@ -374,6 +374,33 @@ DWORD xbox_InputGetState(DWORD dwPort, XBOX_INPUT_STATE *pState)
     }
     if (!c || !SDL_GameControllerGetAttached(c)) {
         g_controller_connected[dwPort] = FALSE;
+        /* Batocera's hotkey-daemon exit keystroke: the sh-ports generator's
+         * context is exit = LEFTALT+F4 (EmulationStation itself gets ESC).
+         * keystrokes land on the focused window; the title's presentation
+         * loop discards SDL events, so SDL_GetKeyboardState is the only
+         * place they are visible. ALT+F4 (a two-key combo) can't false-
+         * trigger; a lone ESC once false-fired on Xvfb's synthetic keyboard
+         * (SDL kbd init state), so it only counts when the keyboard path is
+         * explicitly on. */
+        if (dwPort == 0) {
+            const Uint8 *k = SDL_GetKeyboardState(NULL);
+            int esc_quit;
+            if (!k)
+                return ERROR_DEVICE_NOT_CONNECTED;  /* no keyboard subsystem */
+            esc_quit = getenv("RECOMP_KEYBOARD") != NULL
+                       && getenv("RECOMP_KEYBOARD")[0] != '0'
+                       && k[SDL_SCANCODE_ESCAPE];
+            if (esc_quit || (k[SDL_SCANCODE_LALT] && k[SDL_SCANCODE_F4])) {
+                fprintf(stderr, "[quit] host exit hotkey -> exiting\n");
+                fflush(stderr);
+                exit(0);
+            }
+        }
+        /* js device first: the keyboard fallback below answers SUCCESS with
+         * an empty state every frame (window not focused / no keys down),
+         * which would mask a perfectly good pad behind it. */
+        if (dwPort == 0 && xbox_js_fallback_get_state(dwPort, pState))
+            return ERROR_SUCCESS;
         if (dwPort == 0 && keyboard_state_sdl(pState))
             return ERROR_SUCCESS;
         return ERROR_DEVICE_NOT_CONNECTED;
@@ -439,7 +466,8 @@ DWORD xbox_InputSetState(DWORD dwPort, const XBOX_VIBRATION *pVibration)
     return ERROR_SUCCESS;
 #else
     SDL_GameController *c = g_pads[dwPort];
-    if (!c) return ERROR_DEVICE_NOT_CONNECTED;
+    if (!c)
+        return ERROR_DEVICE_NOT_CONNECTED;
 
     /* SDL rumble needs a duration; refresh for ~1s on each call (the game
      * polls vibration continuously). */
@@ -452,6 +480,8 @@ DWORD xbox_InputSetState(DWORD dwPort, const XBOX_VIBRATION *pVibration)
 BOOL xbox_InputIsConnected(DWORD dwPort)
 {
     if (dwPort >= XBOX_MAX_CONTROLLERS) return FALSE;
+    if (!g_pads[dwPort] && dwPort == 0)
+        return xbox_js_fallback_probe() ? TRUE : g_controller_connected[0];
     return g_controller_connected[dwPort];
 }
 
@@ -460,8 +490,12 @@ DWORD xbox_InputGetCapabilities(DWORD dwPort, DWORD dwFlags, XBOX_INPUT_CAPABILI
     (void)dwFlags;
     if (dwPort >= XBOX_MAX_CONTROLLERS || !pCaps)
         return ERROR_DEVICE_NOT_CONNECTED;
-    if (!g_pads[dwPort])
+    if (!g_pads[dwPort]) {
+        /* fallback pad answers for player 1 */
+        if (dwPort == 0 && xbox_js_fallback_probe())
+            return ERROR_SUCCESS;
         return ERROR_DEVICE_NOT_CONNECTED;
+    }
 
     memset(pCaps, 0, sizeof(XBOX_INPUT_CAPABILITIES));
     pCaps->Type    = 1;   /* XINPUT_DEVTYPE_GAMEPAD */

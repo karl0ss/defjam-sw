@@ -282,10 +282,59 @@ int main(int argc, char **argv)
     return rc;
 }
 #else
+#include <signal.h>
+#include <pthread.h>
+
+/* Console titles never call HalInitiateShutdown during play, so the guest
+ * loop has no way out and the process ignored Batocera's SIGTERM exit
+ * forever. Standard fix: block the exit signals process-wide and let one
+ * small thread sigwait() them — a pending-forever signal is consumed
+ * synchronously and the process exits deterministically, whatever the rest
+ * of the threads are doing. */
+static void *quit_waiter(void *arg)
+{
+    sigset_t set;
+    int sig = 0;
+    (void)arg;
+    sigemptyset(&set);
+    sigaddset(&set, SIGTERM);
+    sigaddset(&set, SIGINT);
+    sigaddset(&set, SIGHUP);
+    for (;;) {
+        if (sigwait(&set, &sig) == 0) {
+            fprintf(stderr, "[quit] signal %d -> exiting cleanly\n", sig);
+            fflush(stderr);
+            _exit(0);
+        }
+    }
+    return NULL;
+}
+
+static void quit_thread_start(void)
+{
+    sigset_t set;
+    pthread_t th;
+    sigemptyset(&set);
+    sigaddset(&set, SIGTERM);
+    sigaddset(&set, SIGINT);
+    sigaddset(&set, SIGHUP);
+    /* Block before any other thread exists: every thread inherits the mask,
+     * so nothing ever sees a default-delivery SIGTERM again; the waiter's
+     * sigwait() is the only consumer. */
+    pthread_sigmask(SIG_BLOCK, &set, NULL);
+    if (pthread_create(&th, NULL, quit_waiter, NULL) == 0)
+        pthread_detach(th);
+    else
+        pthread_sigmask(SIG_UNBLOCK, &set, NULL);   /* degrade to default */
+}
+
 int main(int argc, char **argv)
 {
     (void)argc;
     (void)argv;
+#if !defined(_WIN32)
+    quit_thread_start();
+#endif
     return game_main();
 }
 #endif

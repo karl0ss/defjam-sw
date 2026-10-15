@@ -6,6 +6,9 @@ add_library(xbox_input STATIC
 if(NINTENDO_SWITCH)
     # The Switch's controllers, read through libnx and mapped by position.
     target_sources(xbox_input PRIVATE xinput_nx.c)
+elseif(NOT WIN32)
+    # Kernel joystick-device fallback for SDL2 builds with dead enumeration.
+    target_sources(xbox_input PRIVATE jsdevice_fallback.c)
 endif()
 
 target_include_directories(xbox_input PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
